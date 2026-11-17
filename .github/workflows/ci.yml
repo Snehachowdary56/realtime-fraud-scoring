@@ -1,0 +1,62 @@
+name: CI
+on: [push, pull_request, workflow_dispatch]
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "21", cache: maven}
+      - name: Build and run unit tests (rules, scoring, REST controller)
+        run: mvn -B verify
+      - name: Build Docker image
+        run: docker build -t realtime-fraud-scoring:ci .
+
+  integration-mysql-kafka:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: fraud
+          MYSQL_USER: fraud
+          MYSQL_PASSWORD: fraud
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+      kafka:
+        image: apache/kafka:3.8.0
+        ports: ["9092:9092"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: {distribution: temurin, java-version: "21", cache: maven}
+      - name: Wait for Kafka
+        run: for i in $(seq 1 30); do nc -z localhost 9092 && break; sleep 2; done
+      - name: Integration tests (real MySQL + Kafka, end-to-end detection run)
+        run: mvn -B -Pintegration test
+      - name: Publish detection report
+        if: always()
+        run: cat target/detection-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: detection-report, path: target/detection-report.md}
+
+  sql-optimization:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env: {MYSQL_ROOT_PASSWORD: root}
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Benchmark history queries with and without composite indexes
+        run: MYSQL="mysql -h127.0.0.1 -P3306 -uroot -proot" ./scripts/sql_benchmark.sh
+      - uses: actions/upload-artifact@v4
+        with: {name: sql-benchmark, path: sql-benchmark.md}
