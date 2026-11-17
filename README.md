@@ -30,17 +30,34 @@ Rules use the transaction's **event time**, not the clock, so a replayed stream 
 
 Every rule needs the account's recent history: "how many transactions in the last 10 minutes", "average amount over 30 days", "has this device been seen". Those queries all filter by `account_id` and a time range, so the schema adds two **composite indexes**: `(account_id, created_at)` and `(account_id, device_id, created_at)`.
 
-`scripts/sql_benchmark.sh` seeds 500,000 rows and compares the queries with and without those indexes (`EXPLAIN ANALYZE`). See the **sql-optimization** job in GitHub Actions for the latest numbers.
+`scripts/sql_benchmark.sh` seeds 500,000 rows and compares the queries with and without those indexes. Result from the **sql-optimization** job in GitHub Actions (MySQL 8.0):
+
+| | Without composite indexes | With composite indexes |
+|---|---|---|
+| Velocity query plan | Table scan, **500,000 rows read** | Covering index range scan on `idx_txn_account_time` |
+| Server time for the 3 history queries (avg of 20 runs, `EXPLAIN ANALYZE`) | 279 ms | **0.26 ms** |
+
+At 279 ms per event, real-time scoring would not be possible; with the indexes, the history lookups cost almost nothing.
 
 ## Proof it works (GitHub Actions)
 
 | Job | What it checks |
 |---|---|
 | `unit-tests` | JUnit 5 tests for every rule, the scoring service (Mockito) and the REST controller (MockMvc, validation errors); Docker image build |
-| `integration-mysql-kafka` | Starts real **MySQL 8** and **Kafka** containers, then: REST scoring with history from MySQL, duplicate rejection, and an **end-to-end run**: about 600 labelled transactions streamed through Kafka with planted fraud (card testing, unusual amounts, impossible travel, account takeover). It reports recall, false positive rate and latency, and fails if recall drops below 95% or false positives go above 3% |
+| `integration-mysql-kafka` | Starts real **MySQL 8** and **Kafka** containers, then: REST scoring with history from MySQL, duplicate rejection, and an **end-to-end run**: 645 labelled transactions streamed through Kafka with planted fraud (card testing, unusual amounts, impossible travel, account takeover). It reports recall, false positive rate and latency, and fails if recall drops below 95% or false positives go above 3% |
 | `sql-optimization` | The index benchmark above |
 
-Results appear on each run's summary page.
+Results from the end-to-end run (`integration-mysql-kafka` job):
+
+| Metric | Result |
+|---|---|
+| Live transactions streamed through Kafka | 645 (on top of 7,225 history rows in MySQL) |
+| Planted fraud caught | **25 / 25** (card testing 10/10, unusual amount 5/5, impossible travel 5/5, account takeover 5/5) |
+| Normal transactions wrongly flagged | **0 / 600** |
+| Throughput, all 645 sent at once, one consumer | 108 transactions/second |
+| Latency from Kafka in to decision out, one at a time | **11 ms median, 16 ms p95** |
+
+Honest caveat: the fraud is synthetic and planted to match the rules, so 100% recall shows the pipeline works end to end, not how it would do on real fraud. Results appear on each run's summary page.
 
 ## Run it
 
