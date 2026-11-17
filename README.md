@@ -7,7 +7,7 @@ A Java / Spring Boot backend that scores card transactions for fraud **in real t
 ```
  transactions ──► Kafka "transactions" ──► Spring Boot scoring service ──► Kafka "fraud-decisions"
  (keyed by account,                         │  1. history lookups (MySQL, indexed)
-  so each account stays in order)           │  2. 5 fraud rules (strategy pattern)
+  so each account stays in order)           │  2. 6 fraud and AML rules (strategy pattern)
                                             │  3. score 0-100 ──► ALLOW / REVIEW / BLOCK
  REST POST /api/transactions/score ─────────┘  4. save decision + reasons
 ```
@@ -21,6 +21,7 @@ A Java / Spring Boot backend that scores card transactions for fraud **in real t
 | `IMPOSSIBLE_TRAVEL` | a different country less than 1 hour after the last transaction | 45 |
 | `NEW_DEVICE` | a device the account has never used | 20 |
 | `HIGH_RISK_MERCHANT` | gift cards, crypto or wire transfers | 15 |
+| `AML_STRUCTURING` | anti-money laundering: the 3rd transaction of $9,000–$9,999.99 within 24 hours (splitting money to stay under the $10,000 reporting limit) | 50 |
 
 Score = sum of points (capped at 100). **40+ → REVIEW, 70+ → BLOCK**. Thresholds are in `application.yml`. Each rule is one class implementing `FraudRule`, so adding a signal means adding one class.
 

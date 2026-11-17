@@ -16,7 +16,11 @@ final class Txns {
     }
 
     static AccountHistory history(long last10, long last30, double avg, boolean deviceSeen, String lastCountry, Instant lastTime) {
-        return new AccountHistory(last10, last30, avg, deviceSeen, lastCountry, lastTime);
+        return new AccountHistory(last10, last30, avg, deviceSeen, lastCountry, lastTime, 0);
+    }
+
+    static AccountHistory withNearLimit(long nearLimit) {
+        return new AccountHistory(0, 40, 80, true, "CA", NOW.minusSeconds(3600), nearLimit);
     }
 
     static AccountHistory normal() {

@@ -46,7 +46,7 @@ final class SyntheticStream {
                 lt = lt.plus(Duration.ofMinutes(90 + rnd.nextInt(120)));
             }
             // plant fraud on every 5th account, rotating through four patterns, after the normal day
-            if (a % 5 == 0) plantFraud(account, typical, lt.plus(Duration.ofHours(2)), (a / 5) % 4);
+            if (a % 5 == 0) plantFraud(account, typical, lt.plus(Duration.ofHours(2)), (a / 5) % 5);
         }
         live.sort(Comparator.comparing(l -> l.txn().timestamp()));
     }
@@ -64,8 +64,15 @@ final class SyntheticStream {
                     "dev-" + account, t), true, "high-amount"));
             case 2 -> live.add(new Labelled(txn(account, typical, "online_retail", "BR", "dev-" + account,
                     liveLast(account).plus(Duration.ofMinutes(25))), true, "impossible-travel"));
-            default -> live.add(new Labelled(txn(account, Math.max(700, typical * 10), "gift_cards", "CA",
+            case 3 -> live.add(new Labelled(txn(account, Math.max(700, typical * 10), "gift_cards", "CA",
                     "dev-stolen-" + account, t), true, "takeover"));
+            default -> { // AML structuring: 3 transfers just under $10,000 within 6 hours; the 3rd completes the pattern
+                for (int i = 0; i < 3; i++) {
+                    boolean flaggable = i == 2;
+                    live.add(new Labelled(txn(account, 9400 + rnd.nextInt(500), "wire_transfer", "CA", "dev-" + account,
+                            t.plus(Duration.ofHours(2L * i))), flaggable, flaggable ? "aml-structuring" : "aml-early"));
+                }
+            }
         }
     }
 
@@ -74,9 +81,9 @@ final class SyntheticStream {
                 .map(l -> l.txn().timestamp()).max(Comparator.naturalOrder()).orElse(liveStart);
     }
 
-    /** "velocity-early" purchases look normal by design: they are not counted either way. */
+    /** The lead-up events of a pattern ("velocity-early", "aml-early") are not counted either way. */
     static boolean scored(Labelled l) {
-        return !l.pattern().equals("velocity-early");
+        return !l.pattern().endsWith("-early");
     }
 
     private double normalAmount(double typical) {

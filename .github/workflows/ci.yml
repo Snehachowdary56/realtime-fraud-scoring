@@ -30,6 +30,26 @@ jobs:
       kafka:
         image: apache/kafka:3.8.0
         ports: ["9092:9092"]
+        env:
+          CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_LISTENERS: PLAINTEXT://:9092,INTERNAL://:29092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092,INTERNAL://kafka:29092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+          KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+          KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      clickhouse:
+        image: clickhouse/clickhouse-server:24.8
+        ports: ["8123:8123"]
+        env:
+          CLICKHOUSE_USER: fraud
+          CLICKHOUSE_PASSWORD: fraud
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -43,9 +63,27 @@ jobs:
       - name: Publish detection report
         if: always()
         run: cat target/detection-report.md >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install analytics dependencies
+        run: pip install -r analytics/requirements.txt
+      - name: Spark job - account features from MySQL (JDBC)
+        run: python analytics/spark_features.py --jdbc "jdbc:mysql://localhost:3306/fraud" --out analytics/out
+      - name: Unsupervised anomaly detection (Isolation Forest)
+        run: python analytics/anomaly.py --features analytics/out/account_features.parquet
+      - name: Kafka to ClickHouse pipeline and analytical queries
+        run: python analytics/clickhouse_analytics.py --host localhost --setup analytics/clickhouse_setup.sql
+      - name: Publish analytics report
+        run: python analytics/report.py >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
-        with: {name: detection-report, path: target/detection-report.md}
+        with:
+          name: reports
+          path: |
+            target/detection-report.md
+            analytics/out/*.json
+            analytics/out/*.csv
+            analytics/out/analytics-report.md
 
   sql-optimization:
     runs-on: ubuntu-latest

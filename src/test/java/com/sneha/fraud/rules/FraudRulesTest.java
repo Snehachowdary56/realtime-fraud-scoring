@@ -4,6 +4,7 @@ import static com.sneha.fraud.rules.Txns.NOW;
 import static com.sneha.fraud.rules.Txns.history;
 import static com.sneha.fraud.rules.Txns.normal;
 import static com.sneha.fraud.rules.Txns.txn;
+import static com.sneha.fraud.rules.Txns.withNearLimit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import org.junit.jupiter.api.Nested;
@@ -114,6 +115,26 @@ class FraudRulesTest {
         @Test
         void ignoresEverydayCategories() {
             assertThat(rule.evaluate(txn(50, "groceries", "CA", "dev-1"), normal())).isEmpty();
+        }
+    }
+
+    @Nested
+    class AmlStructuring {
+        private final StructuringRule rule = new StructuringRule();
+
+        @Test
+        void flagsThirdDepositJustUnderReportingLimit() {
+            var r = rule.evaluate(txn(9600), withNearLimit(2));
+            assertThat(r).isPresent();
+            assertThat(r.get().points()).isEqualTo(50);
+            assertThat(r.get().reason()).contains("3 transactions just under $10,000");
+        }
+
+        @Test
+        void ignoresFirstTwoAndAmountsAtOrAboveLimit() {
+            assertThat(rule.evaluate(txn(9600), withNearLimit(1))).isEmpty();
+            assertThat(rule.evaluate(txn(10000), withNearLimit(5))).isEmpty();
+            assertThat(rule.evaluate(txn(8999.99), withNearLimit(5))).isEmpty();
         }
     }
 }

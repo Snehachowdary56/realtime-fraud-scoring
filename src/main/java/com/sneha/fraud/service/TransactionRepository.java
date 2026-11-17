@@ -17,6 +17,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
     @Query("select avg(t.amount) from Transaction t where t.accountId = :account and t.createdAt >= :from and t.createdAt < :to")
     Double averageAmountInWindow(@Param("account") String accountId, @Param("from") Instant from, @Param("to") Instant to);
 
+    @Query("select count(t) from Transaction t where t.accountId = :account and t.createdAt >= :from and t.createdAt < :to"
+            + " and t.amount >= :low and t.amount < :high")
+    long countAmountRangeInWindow(@Param("account") String accountId, @Param("from") Instant from, @Param("to") Instant to,
+                                  @Param("low") java.math.BigDecimal low, @Param("high") java.math.BigDecimal high);
+
     boolean existsByAccountIdAndDeviceIdAndCreatedAtBefore(String accountId, String deviceId, Instant before);
 
     Optional<Transaction> findFirstByAccountIdAndCreatedAtBeforeOrderByCreatedAtDesc(String accountId, Instant before);

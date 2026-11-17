@@ -3,3 +3,5 @@ target/
 .idea/
 .vscode/
 sql-benchmark.md
+analytics/out/
+__pycache__/

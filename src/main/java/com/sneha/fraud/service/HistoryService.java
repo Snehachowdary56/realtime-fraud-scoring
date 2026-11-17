@@ -2,6 +2,7 @@ package com.sneha.fraud.service;
 
 import com.sneha.fraud.domain.Transaction;
 import com.sneha.fraud.rules.AccountHistory;
+import com.sneha.fraud.rules.StructuringRule;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
@@ -24,8 +25,10 @@ public class HistoryService {
         double avg = avgOrNull == null ? 0 : avgOrNull;
         boolean deviceSeen = repository.existsByAccountIdAndDeviceIdAndCreatedAtBefore(accountId, deviceId, at);
         Optional<Transaction> last = repository.findFirstByAccountIdAndCreatedAtBeforeOrderByCreatedAtDesc(accountId, at);
+        long nearLimit = repository.countAmountRangeInWindow(accountId, at.minus(Duration.ofHours(24)), at,
+                StructuringRule.LOW, StructuringRule.REPORTING_LIMIT);
         return new AccountHistory(last10, last30d, avg, deviceSeen,
                 last.map(Transaction::getCountry).orElse(null),
-                last.map(Transaction::getCreatedAt).orElse(null));
+                last.map(Transaction::getCreatedAt).orElse(null), nearLimit);
     }
 }
