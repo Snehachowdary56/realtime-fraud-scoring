@@ -50,7 +50,7 @@ def main():
 
     spark = (SparkSession.builder.appName("fraud-account-features").master("local[*]")
              .config("spark.jars.packages", "com.mysql:mysql-connector-j:8.3.0")
-             .config("spark.sql.session.timeZone", "UTC").getOrCreate())
+             .config("spark.sql.session.timeZone", "UTC").config("spark.sql.shuffle.partitions", "8").getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
     t0 = time.time()
     txns = (spark.read.format("jdbc").option("url", a.jdbc).option("dbtable", "transactions")
