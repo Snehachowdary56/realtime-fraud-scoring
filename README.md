@@ -44,7 +44,7 @@ At 279 ms per event, real-time scoring would not be possible; with the indexes, 
 
 | Job | What it checks |
 |---|---|
-| `unit-tests` | JUnit 5 tests for every rule, the scoring service (Mockito) and the REST controller (MockMvc, validation errors); Docker image build |
+| `unit-tests` | 22 JUnit 5 tests for every rule, the scoring service (Mockito) and the REST controller (MockMvc, validation errors); Docker image build |
 | `integration-mysql-kafka` | Starts real **MySQL 8** and **Kafka** containers, then: REST scoring with history from MySQL, duplicate rejection, and an **end-to-end run**: 645 labelled transactions streamed through Kafka with planted fraud (card testing, unusual amounts, impossible travel, account takeover). It reports recall, false positive rate and latency, and fails if recall drops below 95% or false positives go above 3% |
 | `sql-optimization` | The index benchmark above |
 
@@ -52,13 +52,30 @@ Results from the end-to-end run (`integration-mysql-kafka` job):
 
 | Metric | Result |
 |---|---|
-| Live transactions streamed through Kafka | 645 (on top of 7,225 history rows in MySQL) |
-| Planted fraud caught | **25 / 25** (card testing 10/10, unusual amount 5/5, impossible travel 5/5, account takeover 5/5) |
+| Live transactions streamed through Kafka | 648 (on top of 7,225 history rows in MySQL) |
+| Planted fraud caught | **24 / 24** (card testing 8/8, unusual amount 4/4, impossible travel 4/4, account takeover 4/4, AML structuring 4/4) |
 | Normal transactions wrongly flagged | **0 / 600** |
-| Throughput, all 645 sent at once, one consumer | 108 transactions/second |
-| Latency from Kafka in to decision out, one at a time | **11 ms median, 16 ms p95** |
+| Throughput, all 648 sent at once, one consumer | about 100 transactions/second (96 to 123 across runs) |
+| Latency from Kafka in to decision out, one at a time | **11 to 14 ms median, under 20 ms p95** |
 
 Honest caveat: the fraud is synthetic and planted to match the rules, so 100% recall shows the pipeline works end to end, not how it would do on real fraud. Results appear on each run's summary page.
+
+## Analytics: Spark, unsupervised ML and ClickHouse
+
+After the end-to-end run, the same CI job runs the `analytics/` pipeline:
+
+1. **Spark (PySpark)** reads every scored transaction from MySQL over JDBC (4 partitions) and builds behaviour features per account with window functions: amount spread, devices, countries, shortest gap, 10-minute bursts, country jumps within an hour, high-risk share, and transfers just under $10,000.
+2. **Unsupervised anomaly detection:** an **Isolation Forest** (scikit-learn) ranks accounts by how unusual they are, **without using any fraud labels**. The planted fraud accounts are used only afterwards, to score it.
+3. **Kafka → ClickHouse:** a ClickHouse **Kafka table engine** plus a materialized view streams every decision from the `fraud-decisions` topic into a MergeTree table, which then answers analytical queries (decisions by type, which rules fire most, riskiest accounts).
+
+| Step | Result (latest CI run) |
+|---|---|
+| Spark job | 7,907 transactions, 108 accounts, 6 s |
+| Isolation Forest | all **20 of 20** planted-fraud accounts ranked in its top 20 (ROC-AUC 1.0 over 100 accounts) |
+| ClickHouse | 698 decisions streamed from Kafka; analytical queries in about 4 to 5 ms |
+| Rules fired most (ClickHouse query) | HIGH_AMOUNT 20, HIGH_RISK_MERCHANT 16, VELOCITY 8, AML_STRUCTURING 4, NEW_DEVICE 4, IMPOSSIBLE_TRAVEL 4 |
+
+Caveat: the planted fraud is deliberately obvious, so a perfect score shows the pipeline works, not real-world accuracy.
 
 ## Run it
 
@@ -85,10 +102,10 @@ Tests: `mvn verify` (unit tests) · `mvn -Pintegration test` (needs MySQL and Ka
 
 ## Tech
 
-Java 21 · Spring Boot 3.3 (Web, Data JPA, Validation, Actuator) · Spring for Apache Kafka · MySQL 8 · Flyway · JUnit 5 · Mockito · MockMvc · Docker · GitHub Actions · Bash
+Java 21 · Spring Boot 3.3 (Web, Data JPA, Validation, Actuator) · Spring for Apache Kafka · MySQL 8 · Flyway · JUnit 5 · Mockito · MockMvc · Apache Spark (PySpark) · scikit-learn · ClickHouse · Docker · GitHub Actions · Bash · Python
 
 ## Limits and next steps
 
-- The data is synthetic, and the rules are hand-set. A real system would add an ML model score as one more rule; see my [fraud detection model project](https://github.com/Snehachowdary56/fraud-drift-detection-ai-project) (XGBoost, ROC-AUC 0.977).
+- The data is synthetic, and the rules are hand-set. A real system would feed the Isolation Forest score (or a supervised model) back in as one more rule; see my [fraud detection model project](https://github.com/Snehachowdary56/fraud-drift-detection-ai-project) (XGBoost, ROC-AUC 0.977).
 - History is read from MySQL on each event. At large scale, the counters would move to a stream processor (Kafka Streams or Flink) or a cache.
 - Single-node Kafka and MySQL; no multi-region setup.
