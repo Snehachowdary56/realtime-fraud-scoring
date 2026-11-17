@@ -54,7 +54,7 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     t0 = time.time()
     txns = (spark.read.format("jdbc").option("url", a.jdbc).option("dbtable", "transactions")
-            .option("user", a.user).option("password", a.password)
+            .option("driver", "com.mysql.cj.jdbc.Driver").option("user", a.user).option("password", a.password)
             .option("partitionColumn", "id").option("lowerBound", 1).option("upperBound", 1_000_000)
             .option("numPartitions", 4).load())
     rows = txns.count()
