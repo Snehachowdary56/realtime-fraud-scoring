@@ -45,7 +45,7 @@ At 279 ms per event, real-time scoring would not be possible; with the indexes, 
 | Job | What it checks |
 |---|---|
 | `unit-tests` | 22 JUnit 5 tests for every rule, the scoring service (Mockito) and the REST controller (MockMvc, validation errors); Docker image build |
-| `integration-mysql-kafka` | Starts real **MySQL 8** and **Kafka** containers, then: REST scoring with history from MySQL, duplicate rejection, and an **end-to-end run**: 645 labelled transactions streamed through Kafka with planted fraud (card testing, unusual amounts, impossible travel, account takeover). It reports recall, false positive rate and latency, and fails if recall drops below 95% or false positives go above 3% |
+| `integration-mysql-kafka` | Starts real **MySQL 8** and **Kafka** containers, then: REST scoring with history from MySQL, duplicate rejection, and an **end-to-end run**: 648 labelled transactions streamed through Kafka with planted fraud (card testing, unusual amounts, impossible travel, account takeover, AML structuring), then the Spark, Isolation Forest and ClickHouse analytics. It reports recall, false positive rate and latency, and fails if recall drops below 95% or false positives go above 3% |
 | `sql-optimization` | The index benchmark above |
 
 Results from the end-to-end run (`integration-mysql-kafka` job):
