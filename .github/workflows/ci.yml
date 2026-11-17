@@ -34,8 +34,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with: {distribution: temurin, java-version: "21", cache: maven}
-      - name: Wait for Kafka
-        run: for i in $(seq 1 30); do nc -z localhost 9092 && break; sleep 2; done
+      - name: Wait for MySQL and Kafka
+        run: |
+          for i in $(seq 1 60); do mysql -h127.0.0.1 -ufraud -pfraud -e "SELECT 1" fraud >/dev/null 2>&1 && break; sleep 2; done
+          for i in $(seq 1 30); do nc -z localhost 9092 && break; sleep 2; done
       - name: Integration tests (real MySQL + Kafka, end-to-end detection run)
         run: mvn -B -Pintegration test
       - name: Publish detection report

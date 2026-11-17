@@ -9,6 +9,10 @@ ROWS=${ROWS:-500000}
 RUNS=${RUNS:-20}
 q() { $MYSQL --batch --skip-column-names bench -e "$1" 2>/dev/null; }
 
+echo "Waiting for MySQL..."
+for _ in $(seq 1 60); do $MYSQL -e "SELECT 1" >/dev/null 2>&1 && break; sleep 2; done
+$MYSQL -e "SELECT VERSION()" 2>/dev/null
+
 $MYSQL -e "DROP DATABASE IF EXISTS bench; CREATE DATABASE bench;" 2>/dev/null
 q "CREATE TABLE transactions (
      id BIGINT AUTO_INCREMENT PRIMARY KEY, txn_id VARCHAR(64) NOT NULL, account_id VARCHAR(64) NOT NULL,

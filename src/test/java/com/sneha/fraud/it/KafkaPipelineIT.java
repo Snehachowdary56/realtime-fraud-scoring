@@ -58,10 +58,15 @@ class KafkaPipelineIT extends IntegrationTestBase {
         Map<String, Long> sentAt = new HashMap<>();
         Map<String, Long> latencyMs = new HashMap<>();
         Map<String, String> decisions = new HashMap<>();
+        Map<String, Long> receivedAt = new HashMap<>();
+        receivedNanos = receivedAt;
+        List<Double> singleLatencyMs = new ArrayList<>();
+        double burstSeconds;
 
         try (var consumer = consumer(); var producer = producer()) {
             consumer.subscribe(List.of(outTopic));
             // earliest + a fresh group: no decision is missed; old runs are filtered out by txnId
+            long burstStart = System.nanoTime();
             for (var l : stream.live) {
                 TransactionRequest t = l.txn();
                 sentAt.put(t.txnId(), System.nanoTime());
@@ -76,7 +81,29 @@ class KafkaPipelineIT extends IntegrationTestBase {
                     String id = node.get("txnId").asText();
                     if (sentAt.containsKey(id)) {
                         decisions.put(id, node.get("decision").asText());
-                        latencyMs.put(id, (System.nanoTime() - sentAt.get(id)) / 1_000_000);
+                        long now = System.nanoTime();
+                        latencyMs.put(id, (now - sentAt.get(id)) / 1_000_000);
+                        receivedAt.put(id, now);
+                    }
+                }
+            }
+            burstSeconds = (lastDecisionNanos(latencyMs, sentAt) - burstStart) / 1e9;
+
+            // Latency probe: one transaction at a time, waiting for each decision (no queue in front of it)
+            for (int i = 0; i < 50; i++) {
+                var t = new TransactionRequest("probe-" + run + "-" + i, "probe-" + run + "-" + (i % 5),
+                        java.math.BigDecimal.valueOf(20 + i), "groceries", "CA", "probe-dev",
+                        Instant.parse("2026-11-01T00:00:00Z").plus(Duration.ofMinutes(30L * i)));
+                long t0 = System.nanoTime();
+                producer.send(new ProducerRecord<>(inTopic, t.accountId(), json.writeValueAsString(t))).get();
+                boolean got = false;
+                long until = System.currentTimeMillis() + 10_000;
+                while (!got && System.currentTimeMillis() < until) {
+                    for (var rec : consumer.poll(Duration.ofMillis(5))) {
+                        if (json.readTree(rec.value()).get("txnId").asText().equals(t.txnId())) {
+                            singleLatencyMs.add((System.nanoTime() - t0) / 1_000_000.0);
+                            got = true;
+                        }
                     }
                 }
             }
@@ -95,9 +122,10 @@ class KafkaPipelineIT extends IntegrationTestBase {
                 if (flagged) fp++; else tn++;
             }
         }
-        List<Long> lat = new ArrayList<>(latencyMs.values());
-        Collections.sort(lat);
-        long p50 = lat.get(lat.size() / 2), p95 = lat.get((int) (lat.size() * 0.95) - 1);
+        Collections.sort(singleLatencyMs);
+        double p50 = singleLatencyMs.get(singleLatencyMs.size() / 2);
+        double p95 = singleLatencyMs.get((int) Math.ceil(singleLatencyMs.size() * 0.95) - 1);
+        double throughput = stream.live.size() / burstSeconds;
         double recall = tp / (double) (tp + fn);
         double fpr = fp / (double) (fp + tn);
         double precision = tp / (double) Math.max(1, tp + fp);
@@ -112,8 +140,9 @@ class KafkaPipelineIT extends IntegrationTestBase {
                 .append("| Precision | ").append(String.format("%.1f%%", 100 * precision)).append(" |\n")
                 .append("| Normal transactions flagged (false positive rate) | ").append(fp).append(" / ").append(fp + tn)
                 .append(String.format(" (%.2f%%)", 100 * fpr)).append(" |\n")
-                .append("| Latency Kafka in to decision out, median (all events sent at once) | ").append(p50).append(" ms |\n")
-                .append("| Latency Kafka in to decision out, p95 (all events sent at once) | ").append(p95).append(" ms |\n\n")
+                .append(String.format("| Throughput (all %d sent at once, single consumer) | %.0f transactions/second |%n", stream.live.size(), throughput))
+                .append(String.format("| Latency Kafka in to decision out, one at a time (50 events), median | %.1f ms |%n", p50))
+                .append(String.format("| Latency Kafka in to decision out, one at a time (50 events), p95 | %.1f ms |%n%n", p95))
                 .append("Caught by pattern: ");
         byPattern.forEach((k, v) -> report.append(k).append(" ").append(v[0]).append("/").append(v[0] + v[1]).append("; "));
         report.append("\n");
@@ -121,8 +150,15 @@ class KafkaPipelineIT extends IntegrationTestBase {
         Files.writeString(Path.of("target/detection-report.md"), report.toString());
         System.out.println(report);
 
+        assertThat(singleLatencyMs).hasSize(50);
         assertThat(recall).isGreaterThanOrEqualTo(0.95);
         assertThat(fpr).isLessThanOrEqualTo(0.03);
+    }
+
+    private Map<String, Long> receivedNanos;
+
+    private long lastDecisionNanos(Map<String, Long> latency, Map<String, Long> sent) {
+        return receivedNanos.values().stream().mapToLong(Long::longValue).max().orElse(System.nanoTime());
     }
 
     private KafkaConsumer<String, String> consumer() {
